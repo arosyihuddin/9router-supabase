@@ -13,13 +13,24 @@ function defaultDir() {
 }
 
 export function getDataDir() {
-  // Use /tmp for serverless environments
+  // Use /tmp for serverless environments (no directory creation)
   if (isServerless()) {
     return "/tmp/9router";
   }
 
   const configured = process.env.DATA_DIR;
-  if (!configured) return defaultDir();
+  if (!configured) {
+    const dir = defaultDir();
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      if (e?.code !== "EEXIST") {
+        console.warn(`[DATA_DIR] Could not create '${dir}': ${e.message}`);
+      }
+    }
+    return dir;
+  }
+
   try {
     fs.mkdirSync(configured, { recursive: true });
     return configured;

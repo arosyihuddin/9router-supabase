@@ -67,16 +67,33 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
     setError(null);
 
     try {
+      // Try to parse as JSON (AWS Builder ID format)
+      let body;
+      try {
+        const parsed = JSON.parse(refreshToken.trim());
+        // If successfully parsed, send as-is (AWS Builder ID format)
+        body = parsed;
+      } catch {
+        // If parse fails, it's a string refresh token (Social Login format)
+        body = { refreshToken: refreshToken.trim() };
+      }
+
       const res = await fetch("/api/oauth/kiro/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: refreshToken.trim() }),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Import failed");
+        // Handle duplicate account (409) with special styling
+        if (res.status === 409) {
+          setError(`⚠️ ${data.error}: ${data.details || ""}`);
+        } else {
+          throw new Error(data.error || "Import failed");
+        }
+        return;
       }
 
       // Success - notify parent to refresh connections

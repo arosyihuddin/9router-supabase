@@ -90,8 +90,8 @@ async function initAdapter() {
   }
 
   // Default: SQLite mode
-  ensureDirs();
   console.log("[DB] Using SQLite mode (DATABASE_TYPE=sqlite or not set)");
+  ensureDirs();
 
   // Order per runtime:
   //   Bun:  bun:sqlite → sql.js

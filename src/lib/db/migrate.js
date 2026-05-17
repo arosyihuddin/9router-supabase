@@ -14,15 +14,39 @@ const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
 // Track per-adapter so reusing same adapter skips re-run, but new adapter (after reset) re-runs.
 const _migratedAdapters = new WeakSet();
 
+// Thrown when row-count assertion fails. Outer transaction rolls back,
+// legacy db.json kept intact, marker not written → next boot retries.
+export class MigrationAborted extends Error {
+  constructor(message, droppedRows) {
+    super(message);
+    this.name = "MigrationAborted";
+    this.droppedRows = droppedRows;
+  }
+}
+
+// Insert rows one-by-one, collect failures, then assert COUNT(*) matches input length.
+function importWithAssertion(adapter, tableName, rows, insertFn, rowMeta) {
+  const dropped = [];
+  for (const row of rows) {
+    try { insertFn(row); }
+    catch (err) { dropped.push({ ...rowMeta(row), reason: err.message }); }
+  }
+  const inserted = adapter.get(`SELECT COUNT(*) as c FROM ${tableName}`)?.c ?? 0;
+  if (inserted !== rows.length) {
+    console.warn(`[DB][migrate] ${tableName} row-count mismatch: expected ${rows.length}, got ${inserted}. Dropped:`, dropped);
+    throw new MigrationAborted(`${tableName} row-count mismatch: expected ${rows.length}, got ${inserted}`, dropped);
+  }
+}
+
 function readJsonSafe(file) {
   if (!fs.existsSync(file)) return null;
   try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return null; }
 }
 
-async function isFreshDb(adapter) {
+function isFreshDb(adapter) {
   // Table _meta may not exist yet on truly fresh DB
   try {
-    const row = await adapter.get(`SELECT COUNT(*) as c FROM _meta`);
+    const row = adapter.get(`SELECT COUNT(*) as c FROM _meta`);
     return !row || row.c === 0;
   } catch {
     return true;
@@ -30,20 +54,20 @@ async function isFreshDb(adapter) {
 }
 
 // ─── Versioned migrations runner (skip-version safe) ─────────────────────
-async function runVersionedMigrations(adapter) {
+function runVersionedMigrations(adapter) {
   // Bootstrap _meta first so we can read schemaVersion
-  await adapter.exec(buildCreateTableSql("_meta", TABLES._meta));
+  adapter.exec(buildCreateTableSql("_meta", TABLES._meta));
 
-  const current = parseInt(await getMetaSync(adapter, "schemaVersion", "0"), 10) || 0;
+  const current = parseInt(getMetaSync(adapter, "schemaVersion", "0"), 10) || 0;
   const target = latestVersion();
   if (current >= target) return { applied: 0, from: current, to: current };
 
   const pending = MIGRATIONS.filter((m) => m.version > current);
   let lastApplied = current;
   for (const m of pending) {
-    await adapter.transaction(async () => {
+    adapter.transaction(() => {
       m.up(adapter);
-      await setMetaSync(adapter, "schemaVersion", m.version);
+      setMetaSync(adapter, "schemaVersion", m.version);
     });
     lastApplied = m.version;
     console.log(`[DB][migrate] applied #${m.version} ${m.name}`);
@@ -52,13 +76,13 @@ async function runVersionedMigrations(adapter) {
 }
 
 // ─── Auto-sync (additive only): add missing tables/columns/indexes ───────
-async function syncSchemaFromTables(adapter) {
+function syncSchemaFromTables(adapter) {
   for (const [tableName, def] of Object.entries(TABLES)) {
     // Create table if absent
-    await adapter.exec(buildCreateTableSql(tableName, def));
+    adapter.exec(buildCreateTableSql(tableName, def));
 
     // Diff columns
-    const existing = await adapter.all(`PRAGMA table_info(${tableName})`);
+    const existing = adapter.all(`PRAGMA table_info(${tableName})`);
     const existingNames = new Set(existing.map((r) => r.name));
     for (const [colName, colDef] of Object.entries(def.columns)) {
       if (!existingNames.has(colName)) {
@@ -69,7 +93,7 @@ async function syncSchemaFromTables(adapter) {
           .replace(/UNIQUE/i, "")
           .trim();
         try {
-          await adapter.exec(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${safeDef}`);
+          adapter.exec(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${safeDef}`);
           console.log(`[DB][sync] +column ${tableName}.${colName}`);
         } catch (e) {
           console.warn(`[DB][sync] add column ${tableName}.${colName} failed: ${e.message}`);
@@ -79,71 +103,77 @@ async function syncSchemaFromTables(adapter) {
 
     // Indexes (idempotent)
     for (const idx of def.indexes || []) {
-      try { await adapter.exec(idx); } catch {}
+      try { adapter.exec(idx); } catch {}
     }
   }
 }
 
 // ─── Legacy JSON import (one-time) ───────────────────────────────────────
-async function importLegacyMain(adapter, data) {
+function importLegacyMain(adapter, data) {
   if (!data || typeof data !== "object") return;
 
   if (data.settings) {
-    await adapter.run(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`, [stringifyJson(data.settings)]);
+    adapter.run(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`, [stringifyJson(data.settings)]);
   }
-  for (const c of data.providerConnections || []) {
+
+  importWithAssertion(adapter, "providerConnections", data.providerConnections || [], (c) => {
     const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
-    await adapter.run(
+    adapter.run(
       `INSERT OR REPLACE INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, provider, authType || "oauth", name || null, email || null, priority || null, isActive === false ? 0 : 1, stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
     );
-  }
-  for (const n of data.providerNodes || []) {
+  }, (c) => ({ id: c.id ?? null, provider: c.provider ?? null, name: c.name ?? null }));
+
+  importWithAssertion(adapter, "providerNodes", data.providerNodes || [], (n) => {
     const { id, type, name, createdAt, updatedAt, ...rest } = n;
-    await adapter.run(
+    adapter.run(
       `INSERT OR REPLACE INTO providerNodes(id, type, name, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
       [id, type || null, name || null, stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
     );
-  }
-  for (const p of data.proxyPools || []) {
+  }, (n) => ({ id: n.id ?? null, type: n.type ?? null, name: n.name ?? null }));
+
+  importWithAssertion(adapter, "proxyPools", data.proxyPools || [], (p) => {
     const { id, isActive, testStatus, createdAt, updatedAt, ...rest } = p;
-    await adapter.run(
+    adapter.run(
       `INSERT OR REPLACE INTO proxyPools(id, isActive, testStatus, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
       [id, isActive === false ? 0 : 1, testStatus || "unknown", stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
     );
-  }
-  for (const k of data.apiKeys || []) {
-    await adapter.run(
+  }, (p) => ({ id: p.id ?? null }));
+
+  importWithAssertion(adapter, "apiKeys", data.apiKeys || [], (k) => {
+    adapter.run(
       `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
       [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
     );
-  }
-  for (const c of data.combos || []) {
-    await adapter.run(
+  }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
+
+  importWithAssertion(adapter, "combos", data.combos || [], (c) => {
+    adapter.run(
       `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
       [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
     );
-  }
+  }, (c) => ({ id: c.id ?? null, name: c.name ?? null }));
+
   for (const [alias, model] of Object.entries(data.modelAliases || {})) {
-    await adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('modelAliases', ?, ?)`, [alias, stringifyJson(model)]);
+    adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('modelAliases', ?, ?)`, [alias, stringifyJson(model)]);
   }
   for (const m of data.customModels || []) {
     const k = `${m.providerAlias}|${m.id}|${m.type || "llm"}`;
-    await adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, stringifyJson(m)]);
+    adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, stringifyJson(m)]);
   }
   for (const [tool, mappings] of Object.entries(data.mitmAlias || {})) {
-    await adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('mitmAlias', ?, ?)`, [tool, stringifyJson(mappings || {})]);
+    adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('mitmAlias', ?, ?)`, [tool, stringifyJson(mappings || {})]);
   }
   for (const [provider, models] of Object.entries(data.pricing || {})) {
-    await adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
+    adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
   }
 }
 
-async function importLegacyUsage(adapter, data) {
+function importLegacyUsage(adapter, data) {
   if (!data || typeof data !== "object") return;
   for (const e of data.history || []) {
     const t = e.tokens || {};
-    await adapter.run(
+    adapter.run(
       `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         e.timestamp || new Date().toISOString(),
@@ -158,10 +188,10 @@ async function importLegacyUsage(adapter, data) {
     );
   }
   for (const [dateKey, day] of Object.entries(data.dailySummary || {})) {
-    await adapter.run(`INSERT OR REPLACE INTO usageDaily(dateKey, data) VALUES(?, ?)`, [dateKey, stringifyJson(day)]);
+    adapter.run(`INSERT OR REPLACE INTO usageDaily(dateKey, data) VALUES(?, ?)`, [dateKey, stringifyJson(day)]);
   }
   if (typeof data.totalRequestsLifetime === "number") {
-    await setMetaSync(adapter, "totalRequestsLifetime", data.totalRequestsLifetime);
+    setMetaSync(adapter, "totalRequestsLifetime", data.totalRequestsLifetime);
   }
 }
 
@@ -189,13 +219,13 @@ export async function runMigrationOnce(adapter) {
 
   // Capture freshness BEFORE migrations stamp _meta (otherwise we'd misclassify
   // a brand-new DB as non-fresh once schemaVersion is written).
-  const fresh = await isFreshDb(adapter);
+  const fresh = isFreshDb(adapter);
 
   // 1. Always run versioned migrations chain (skip-version safe)
-  const migInfo = await runVersionedMigrations(adapter);
+  const migInfo = runVersionedMigrations(adapter);
 
   // 2. Additive sync (auto add missing columns/indexes declared in TABLES)
-  await syncSchemaFromTables(adapter);
+  syncSchemaFromTables(adapter);
 
   // 3. One-time legacy JSON import (only if DB was fresh on entry)
   const alreadyImported = fs.existsSync(MIGRATED_MARKER);
@@ -210,14 +240,22 @@ export async function runMigrationOnce(adapter) {
     const backupDir = makeBackupDir("migrate-from-json");
     for (const f of Object.values(LEGACY_FILES)) backupFile(f, backupDir);
 
-    await adapter.transaction(async () => {
-      await importLegacyMain(adapter, legacyMain);
-      await importLegacyUsage(adapter, legacyUsage);
-      importLegacyDisabled(adapter, legacyDisabled);
-      importLegacyDetails(adapter, legacyDetails);
-      await setMetaSync(adapter, "appVersion", getAppVersion());
-      await setMetaSync(adapter, "migratedAt", new Date().toISOString());
-    });
+    try {
+      adapter.transaction(() => {
+        importLegacyMain(adapter, legacyMain);
+        importLegacyUsage(adapter, legacyUsage);
+        importLegacyDisabled(adapter, legacyDisabled);
+        importLegacyDetails(adapter, legacyDetails);
+        setMetaSync(adapter, "appVersion", getAppVersion());
+        setMetaSync(adapter, "migratedAt", new Date().toISOString());
+      });
+    } catch (err) {
+      if (err instanceof MigrationAborted) {
+        console.error(`[DB][migrate] aborted: ${err.message} | legacy JSON kept | backup: ${backupDir}`);
+        return;
+      }
+      throw err;
+    }
 
     try { fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString()); } catch {}
     pruneOldBackups();
@@ -226,17 +264,17 @@ export async function runMigrationOnce(adapter) {
   }
 
   if (fresh) {
-    await setMetaSync(adapter, "appVersion", getAppVersion());
+    setMetaSync(adapter, "appVersion", getAppVersion());
     return;
   }
 
   // 4. App version bump → backup data.sqlite (safety net before user-side upgrade)
-  const oldVer = await getMetaSync(adapter, "appVersion", null);
+  const oldVer = getMetaSync(adapter, "appVersion", null);
   const newVer = getAppVersion();
   if (oldVer && oldVer !== newVer) {
     const backupDir = makeBackupDir(`upgrade-${oldVer}-to-${newVer}`);
     try { backupFile(DATA_FILE, backupDir); } catch {}
-    await setMetaSync(adapter, "appVersion", newVer);
+    setMetaSync(adapter, "appVersion", newVer);
     pruneOldBackups();
     console.log(`[DB][migrate] App ${oldVer} → ${newVer} | schema ${migInfo.from} → ${migInfo.to} | backup: ${backupDir}`);
   } else if (migInfo.applied > 0) {

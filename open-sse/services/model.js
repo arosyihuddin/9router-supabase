@@ -49,6 +49,8 @@ const ALIAS_TO_PROVIDER_ID = {
   assemblyai: "assemblyai",
   nb: "nanobanana",
   nanobanana: "nanobanana",
+  qwa: "qwen-api",
+  "qwen-api": "qwen-api",
   ch: "chutes",
   chutes: "chutes",
   ark: "volcengine-ark",

@@ -589,6 +589,16 @@ export const PROVIDER_MODELS = {
     { id: "nanobanana-flash", name: "NanoBanana Flash", type: "image", params: ["n", "size"] },
     { id: "nanobanana-pro", name: "NanoBanana Pro", type: "image", params: ["n", "size"] },
   ],
+  "qwen-api": [
+    // Dedicated media models
+    { id: "qwen-image", name: "Qwen Image (T2I + Edit)", type: "image", params: ["size"], capabilities: ["edit"] },
+    { id: "qwen-video", name: "Qwen Video (T2V)", type: "video", params: ["size"] },
+    // Flagship multimodal models that also handle media
+    { id: "qwen3.6-plus", name: "Qwen3.6 Plus (T2I/T2V/Edit)", type: "image", params: ["size"], capabilities: ["edit", "video"] },
+    { id: "qwen-max-latest", name: "Qwen Max Latest (T2I/T2V/Edit)", type: "image", params: ["size"], capabilities: ["edit", "video"] },
+    { id: "qwen3.5-plus", name: "Qwen3.5 Plus (T2I/T2V/Edit)", type: "image", params: ["size"], capabilities: ["edit", "video"] },
+    { id: "qwen3.5-flash", name: "Qwen3.5 Flash (T2I/T2V/Edit)", type: "image", params: ["size"], capabilities: ["edit", "video"] },
+  ],
   sdwebui: [
     { id: "stable-diffusion-v1-5", name: "Stable Diffusion v1.5", type: "image", params: ["n", "size"] },
     { id: "sdxl-base-1.0", name: "SDXL Base 1.0", type: "image", params: ["n", "size"] },

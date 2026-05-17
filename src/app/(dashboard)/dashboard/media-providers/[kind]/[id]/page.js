@@ -114,6 +114,17 @@ const KIND_EXAMPLE_CONFIG = {
     extraBody: { prompt: "Describe this image in detail" },
     defaultResponse: `{\n  "text": "A cat sitting on a windowsill...",\n  "model": "..."\n}`,
   },
+  imageEdit: {
+    inputLabel: "Prompt",
+    inputPlaceholder: "Add a rainbow in the background",
+    defaultInput: "Add a rainbow in the background",
+    bodyKey: "prompt",
+    defaultResponse: `{\n  "data": [\n    { "url": "..." }\n  ]\n}`,
+    extraFields: [
+      { key: "image", label: "Image (URL or data URL)", type: "text", default: "https://download.samplelib.com/png/sample-hut-400x300.png" },
+      { key: "size", label: "Size", type: "select", default: "1024x1024", options: ["1024x1024", "1024x1536", "1536x1024", "1024x1792", "1792x1024"] },
+    ],
+  },
   video: {
     inputLabel: "Prompt",
     inputPlaceholder: "A serene lake at sunset",
@@ -129,6 +140,124 @@ const KIND_EXAMPLE_CONFIG = {
     defaultResponse: `{\n  "data": [\n    { "url": "...", "format": "mp3" }\n  ]\n}`,
   },
 };
+
+// QwenApiTokenHelper — collapsible panel showing how to extract token from chat.qwen.ai
+const QWEN_TOKEN_BOOKMARKLET = `javascript: (function () {
+  if (window.location.hostname !== "chat.qwen.ai") {
+    alert("\u{1F680} This code is for chat.qwen.ai");
+    window.open("https://chat.qwen.ai", "_blank");
+    return;
+  }
+  function getApiKeyData() {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      alert("\u274C qwen access_token not found !!!");
+      return null;
+    }
+    return token;
+  }
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      console.error("\u274C Failed to copy to clipboard:", err);
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const success = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return success;
+    }
+  }
+  const apiKeyData = getApiKeyData();
+  if (!apiKeyData) return;
+  copyToClipboard(apiKeyData).then((success) => {
+    if (success) {
+      alert("\u{1F511} Qwen access_token copied to clipboard !!! \u{1F389}");
+    } else {
+      prompt("\u{1F530} Qwen access_token:", apiKeyData);
+    }
+  });
+})();`;
+
+function QwenApiTokenHelper() {
+  const [open, setOpen] = useState(false);
+  const { copy, copied } = useCopyToClipboard();
+
+  return (
+    <div className="rounded-lg border border-border bg-surface-secondary">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-medium text-text-primary">
+          <span className="material-symbols-outlined text-[18px] text-primary">key</span>
+          How to get your Qwen token
+        </span>
+        <span className="material-symbols-outlined text-[18px] text-text-muted">
+          {open ? "expand_less" : "expand_more"}
+        </span>
+      </button>
+
+      {open && (
+        <div className="space-y-3 border-t border-border px-3 py-3">
+          <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-text-muted">
+            <li>
+              Buka{" "}
+              <a
+                href="https://chat.qwen.ai/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                chat.qwen.ai
+              </a>{" "}
+              dan login.
+            </li>
+            <li>Tekan <code className="rounded bg-surface px-1">F12</code> → tab <strong>Console</strong>.</li>
+            <li>Paste script di bawah, tekan <code className="rounded bg-surface px-1">Enter</code>.</li>
+            <li>Token otomatis ke-copy ke clipboard (alert muncul).</li>
+            <li>Paste token-nya ke field <strong>API Key</strong> pada connection di bawah.</li>
+          </ol>
+
+          <div className="relative">
+            <pre className="max-h-48 overflow-auto rounded-md border border-border bg-surface p-2 pr-20 text-[11px] leading-relaxed text-text-primary">
+              <code>{QWEN_TOKEN_BOOKMARKLET}</code>
+            </pre>
+            <button
+              type="button"
+              onClick={() => copy(QWEN_TOKEN_BOOKMARKLET)}
+              className="absolute right-2 top-2 inline-flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-medium text-white hover:opacity-90"
+            >
+              <span className="material-symbols-outlined text-[14px]">
+                {copied ? "check" : "content_copy"}
+              </span>
+              {copied ? "Copied" : "Copy script"}
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <a
+              href="https://chat.qwen.ai/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded bg-blue-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-600"
+            >
+              <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+              Open chat.qwen.ai
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // EmbeddingExampleCard
 function EmbeddingExampleCard({ providerId, customAlias }) {
@@ -921,10 +1050,17 @@ function GenericExampleCard({ providerId, kind }) {
   const exConfig = KIND_EXAMPLE_CONFIG[kind];
   const safeExConfig = exConfig || {};
 
-  // Get models for this kind (e.g., type="image")
-  const kindModels = getModelsByProviderId(providerId).filter((m) => m.type === kind);
-  // Kinds that need a model identifier in the request (image/video/music)
-  const KIND_NEEDS_MODEL = new Set(["image", "video", "music", "imageToText"]);
+  // Get models for this kind. For imageEdit/video we also accept image-type
+  // models that declare a matching capability (mirrors ModelsCard logic).
+  const kindModels = getModelsByProviderId(providerId).filter((m) => {
+    const type = m.type || "llm";
+    if (type === kind) return true;
+    if (kind === "imageEdit" && type === "image" && m.capabilities?.includes("edit")) return true;
+    if (kind === "video" && type === "image" && m.capabilities?.includes("video")) return true;
+    return false;
+  });
+  // Kinds that need a model identifier in the request (image/video/music/imageEdit/imageToText)
+  const KIND_NEEDS_MODEL = new Set(["image", "imageEdit", "video", "music", "imageToText"]);
   const needsModel = KIND_NEEDS_MODEL.has(kind);
   const allowManualModel = needsModel && kindModels.length === 0;
   const [selectedModel, setSelectedModel] = useState(kindModels[0]?.id ?? "");
@@ -1398,7 +1534,7 @@ function GenericExampleCard({ providerId, kind }) {
           <pre className="bg-sidebar rounded-lg px-3 py-2.5 text-xs font-mono text-text-main overflow-x-auto whitespace-pre-wrap break-all opacity-70">
             {result ? resultJson : exConfig.defaultResponse}
           </pre>
-          {kind === "image" && (binaryImageUrl || result?.data?.data?.[0]) && (
+          {(kind === "image" || kind === "imageEdit") && (binaryImageUrl || result?.data?.data?.[0]) && (
             <div className="mt-2">
               <div className="flex items-center justify-end mb-1.5">
                 <a
@@ -1413,6 +1549,28 @@ function GenericExampleCard({ providerId, kind }) {
               <img
                 src={binaryImageUrl || (result?.data?.data?.[0]?.b64_json ? `data:image/png;base64,${result.data.data[0].b64_json}` : result?.data?.data?.[0]?.url)}
                 alt="Generated"
+                className="max-w-full rounded-lg border border-border"
+              />
+            </div>
+          )}
+          {kind === "video" && result?.data?.data?.[0]?.url && (
+            <div className="mt-2">
+              <div className="flex items-center justify-end mb-1.5">
+                <a
+                  href={result.data.data[0].url}
+                  download="video.mp4"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[14px]">download</span>
+                  Download
+                </a>
+              </div>
+              <video
+                src={result.data.data[0].url}
+                controls
+                playsInline
                 className="max-w-full rounded-lg border border-border"
               />
             </div>
@@ -1845,6 +2003,9 @@ export default function MediaProviderDetailPage() {
           )}
         </div>
       )}
+
+      {/* Qwen API: how-to-get-token helper */}
+      {id === "qwen-api" && <QwenApiTokenHelper />}
 
       {/* Connections */}
       {!isCustom && provider.noAuth ? (

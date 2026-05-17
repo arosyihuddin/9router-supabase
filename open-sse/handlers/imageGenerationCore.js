@@ -33,6 +33,7 @@ export async function handleImageGenerationCore({
   log,
   streamToClient = false,
   binaryOutput = false,
+  mode = "image",
   onCredentialsRefreshed,
   onRequestSuccess,
 }) {
@@ -50,19 +51,23 @@ export async function handleImageGenerationCore({
     );
   }
 
+  // Some adapters (e.g. qwen-api) need to know image vs imageEdit vs video to pick endpoint/body.
+  // Inject __mode into the request body for adapters that look it up there.
+  const bodyWithMode = body && typeof body === "object" ? { ...body, __mode: mode } : body;
+
   let url;
   let headers;
   let requestBody;
 
   try {
-    url = adapter.buildUrl(model, credentials);
-    requestBody = await adapter.buildBody(model, body);
-    headers = adapter.buildHeaders(credentials, requestBody, model, body);
+    url = adapter.buildUrl(model, credentials, { mode });
+    requestBody = await adapter.buildBody(model, bodyWithMode);
+    headers = adapter.buildHeaders(credentials, requestBody, model, bodyWithMode);
   } catch (error) {
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, error.message || `Invalid ${provider} image request`);
   }
 
-  log?.debug?.("IMAGE", `${provider.toUpperCase()} | ${model} | prompt="${body.prompt.slice(0, 50)}..."`);
+  log?.debug?.("IMAGE", `${provider.toUpperCase()} | ${model} | mode=${mode} | prompt="${body.prompt.slice(0, 50)}..."`);
 
   let providerResponse;
   try {
@@ -97,9 +102,9 @@ export async function handleImageGenerationCore({
       if (onCredentialsRefreshed) await onCredentialsRefreshed(newCredentials);
 
       try {
-        const retryBody = await adapter.buildBody(model, body);
-        const retryHeaders = adapter.buildHeaders(credentials, retryBody, model, body);
-        const retryUrl = adapter.buildUrl(model, credentials);
+        const retryBody = await adapter.buildBody(model, bodyWithMode);
+        const retryHeaders = adapter.buildHeaders(credentials, retryBody, model, bodyWithMode);
+        const retryUrl = adapter.buildUrl(model, credentials, { mode });
         providerResponse = await fetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,

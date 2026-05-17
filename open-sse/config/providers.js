@@ -318,6 +318,11 @@ export const PROVIDERS = {
     baseUrl: "https://api.nanobananaapi.ai/v1/chat/completions",
     format: "openai"
   },
+  // Qwen API Proxy (qwen.aikit.club) — OpenAI-compatible; supports image/edit/video
+  "qwen-api": {
+    baseUrl: "https://qwen.aikit.club/v1/chat/completions",
+    format: "openai"
+  },
   chutes: {
     baseUrl: "https://llm.chutes.ai/v1/chat/completions",
     format: "openai"

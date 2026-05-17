@@ -206,7 +206,13 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
   const builtInModels = kindFilter
     ? allBuiltIn.filter((m) => {
         if (m.kinds) return m.kinds.includes(kindFilter);
-        return (m.type || "llm") === kindFilter;
+        const type = m.type || "llm";
+        if (type === kindFilter) return true;
+        // imageEdit kind: include image-type models that declare an "edit" capability
+        if (kindFilter === "imageEdit" && type === "image" && m.capabilities?.includes("edit")) return true;
+        // video kind: include image-type models that declare a "video" capability
+        if (kindFilter === "video" && type === "image" && m.capabilities?.includes("video")) return true;
+        return false;
       })
     : allBuiltIn;
 

@@ -6,6 +6,7 @@ import sdwebui from "./sdwebui.js";
 import comfyui from "./comfyui.js";
 import huggingface from "./huggingface.js";
 import nanobanana from "./nanobanana.js";
+import qwenApi from "./qwenApi.js";
 import falAi from "./falAi.js";
 import stabilityAi from "./stabilityAi.js";
 import blackForestLabs from "./blackForestLabs.js";
@@ -23,6 +24,7 @@ const ADAPTERS = {
   comfyui,
   huggingface,
   nanobanana,
+  "qwen-api": qwenApi,
   "fal-ai": falAi,
   "stability-ai": stabilityAi,
   "black-forest-labs": blackForestLabs,

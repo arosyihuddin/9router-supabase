@@ -1,5 +1,4 @@
 const fs = require("fs");
-const { isServerless } = require("@/lib/env.js");
 const path = require("path");
 const zlib = require("zlib");
 const { DATA_DIR } = require("./paths");
@@ -13,10 +12,16 @@ const log = (msg) => console.log(`[${time()}] [MITM] ${msg}`);
 const err = (msg) => console.error(`[${time()}] ❌ [MITM] ${msg}`);
 
 const DUMP_DIR = path.join(DATA_DIR, "logs", "mitm");
+if (!fs.existsSync(DUMP_DIR)) fs.mkdirSync(DUMP_DIR, { recursive: true });
 
-// Skip directory creation in Supabase mode (serverless environments)
-if (!isServerless()) {
-  if (!fs.existsSync(DUMP_DIR)) fs.mkdirSync(DUMP_DIR, { recursive: true });
+// Clear all files inside DUMP_DIR (called on MITM server start to avoid unbounded growth)
+function clearDumpDir() {
+  try {
+    if (!fs.existsSync(DUMP_DIR)) return;
+    for (const f of fs.readdirSync(DUMP_DIR)) {
+      try { fs.rmSync(path.join(DUMP_DIR, f), { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
 }
 
 const EMPTY_BODY_RE = /^\s*(\{\s*\}|\[\s*\]|null)?\s*$/;
@@ -98,4 +103,4 @@ function createResponseDumper(req, tag = "raw") {
   };
 }
 
-module.exports = { log, err, dumpRequest, createResponseDumper };
+module.exports = { log, err, dumpRequest, createResponseDumper, clearDumpDir };

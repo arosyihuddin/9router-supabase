@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getApiKeys } from "@/lib/localDb";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
+import { isServerless } from "@/lib/env";
 
 const CLI_TOKEN_SALT = "9r-cli-auth";
 
@@ -11,7 +12,10 @@ export async function POST(request) {
     const { model, kind } = await request.json();
     if (!model) return NextResponse.json({ error: "Model required" }, { status: 400 });
 
-    const baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`;
+    // In serverless environments, use the public URL instead of localhost
+    const baseUrl = isServerless()
+      ? `https://${request.headers.get('host')}`
+      : `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`;
 
     // Get an active internal API key for auth (if requireApiKey is enabled)
     let apiKey = null;
@@ -22,8 +26,14 @@ export async function POST(request) {
 
     const headers = { "Content-Type": "application/json" };
     if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-    // Bypass dashboardGuard for internal self-call via CLI token (machineId-based)
-    headers["x-9r-cli-token"] = await getConsistentMachineId(CLI_TOKEN_SALT);
+    // Bypass dashboardGuard for internal self-call via CLI token (machineId-based).
+    // Skip in serverless: machineId is unreliable there (no /etc/machine-id, no
+    // hostname binary), and the public URL path uses the API key instead.
+    if (!isServerless()) {
+      try {
+        headers["x-9r-cli-token"] = await getConsistentMachineId(CLI_TOKEN_SALT);
+      } catch {}
+    }
 
     const start = Date.now();
 

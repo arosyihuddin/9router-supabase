@@ -1,5 +1,6 @@
 import { PROVIDERS } from "../config/providers.js";
 import { buildClineHeaders } from "../../src/shared/utils/clineAuth.js";
+import { normalizeCustomHeaders } from "../../src/shared/utils/customHeaders.js";
 
 const OPENAI_COMPATIBLE_PREFIX = "openai-compatible-";
 const OPENAI_COMPATIBLE_DEFAULTS = {
@@ -314,6 +315,10 @@ export function buildProviderHeaders(provider, credentials, stream = true, body 
   // Stream accept header
   if (stream) {
     headers["Accept"] = "text/event-stream";
+  }
+
+  if (isOpenAICompatible(provider)) {
+    Object.assign(headers, normalizeCustomHeaders(credentials?.providerSpecificData?.customHeaders));
   }
 
   return headers;

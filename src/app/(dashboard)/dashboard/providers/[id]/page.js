@@ -46,6 +46,9 @@ export default function ProviderDetailPage() {
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [suggestedModels, setSuggestedModels] = useState([]);
+  const [availableProviderModels, setAvailableProviderModels] = useState([]);
+  const [fetchingProviderModels, setFetchingProviderModels] = useState(false);
+  const [providerModelsFetchError, setProviderModelsFetchError] = useState("");
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
@@ -59,6 +62,7 @@ export default function ProviderDetailPage() {
         textIcon: providerNode.type === "anthropic-compatible" ? "AC" : "OC",
         apiType: providerNode.apiType,
         baseUrl: providerNode.baseUrl,
+        iconUrl: providerNode.iconUrl,
         type: providerNode.type,
       }
     : (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId] || WEB_COOKIE_PROVIDERS[providerId]);
@@ -671,6 +675,49 @@ export default function ProviderDetailPage() {
     }
   };
 
+  const handleFetchProviderModels = async () => {
+    if (fetchingProviderModels) return;
+    const activeConnection = connections.find((conn) => conn.isActive !== false);
+    if (!activeConnection && !isFreeNoAuth) return;
+
+    setFetchingProviderModels(true);
+    setProviderModelsFetchError("");
+    try {
+      if (!activeConnection) {
+        setProviderModelsFetchError("Add a connection to fetch models.");
+        return;
+      }
+
+      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
+      const data = await res.json();
+      if (!res.ok) {
+        setProviderModelsFetchError(data.error || "Failed to fetch models");
+        return;
+      }
+
+      const fetchedModels = (data.models || [])
+        .map((model) => {
+          const id = model.id || model.name || model.model;
+          if (!id) return null;
+          return {
+            id,
+            name: model.name || model.displayName || model.display_name || id,
+          };
+        })
+        .filter(Boolean);
+
+      setAvailableProviderModels(fetchedModels);
+      if (fetchedModels.length === 0) {
+        setProviderModelsFetchError("No models returned from /models.");
+      }
+    } catch (error) {
+      console.log("Error fetching provider models:", error);
+      setProviderModelsFetchError("Failed to fetch models");
+    } finally {
+      setFetchingProviderModels(false);
+    }
+  };
+
   const renderModelsSection = () => {
     if (isCompatible) {
       return (
@@ -712,6 +759,15 @@ export default function ProviderDetailPage() {
         alias,
         fullModel,
       }));
+    const existingModelIds = new Set([
+      ...allModels.map((m) => m.id),
+      ...customModels.map((m) => m.id),
+    ]);
+    const canFetchModels = connections.some((conn) => conn.isActive !== false);
+    const addFetchedModel = async (modelId) => {
+      const alias = providerInfo.passthroughModels ? modelId.split("/").pop() : modelId;
+      await handleSetAlias(modelId, alias, providerStorageAlias);
+    };
 
     return (
       <div className="flex flex-wrap gap-3">
@@ -767,6 +823,57 @@ export default function ProviderDetailPage() {
           <span className="material-symbols-outlined text-sm">add</span>
           Add Model
         </button>
+        <button
+          onClick={handleFetchProviderModels}
+          disabled={!canFetchModels || fetchingProviderModels}
+          className={`flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-2 text-xs transition-colors sm:w-auto ${
+            canFetchModels && !fetchingProviderModels
+              ? "border-primary/40 text-primary hover:border-primary hover:bg-primary/5"
+              : "cursor-not-allowed border-border text-text-muted opacity-60"
+          }`}
+        >
+          <span className="material-symbols-outlined text-sm">sync</span>
+          {fetchingProviderModels ? "Fetching..." : "Fetch Models"}
+        </button>
+
+        {!canFetchModels && (
+          <p className="w-full text-xs text-text-muted">Add a connection to enable fetching models.</p>
+        )}
+
+        {providerModelsFetchError && (
+          <p className="w-full text-xs text-red-500">{providerModelsFetchError}</p>
+        )}
+
+        {availableProviderModels.length > 0 && (
+          <div className="mt-2 flex w-full flex-col gap-2 rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium">Available Models</p>
+              <span className="text-xs text-text-muted">{availableProviderModels.length} fetched</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {availableProviderModels.map((model) => {
+                const isAdded = existingModelIds.has(model.id);
+                return (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => !isAdded && addFetchedModel(model.id)}
+                    disabled={isAdded}
+                    className={`inline-flex max-w-full items-center gap-1 rounded border px-2.5 py-1.5 text-xs transition-colors ${
+                      isAdded
+                        ? "cursor-default border-border bg-surface-2 text-text-muted"
+                        : "border-border text-text-main hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+                    }`}
+                    title={model.name}
+                  >
+                    <span className="material-symbols-outlined text-[13px]">{isAdded ? "check" : "add"}</span>
+                    <span className="truncate">{model.id}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Suggested models from provider API — show only models not yet added */}
         {suggestedModels.length > 0 && (() => {
@@ -844,6 +951,9 @@ export default function ProviderDetailPage() {
 
   // Determine icon path: OpenAI Compatible providers use specialized icons
   const getHeaderIconPath = () => {
+    if (isOpenAICompatible && providerInfo.iconUrl) {
+      return providerInfo.iconUrl;
+    }
     if (isOpenAICompatible && providerInfo.apiType) {
       return providerInfo.apiType === "responses" ? "/providers/oai-r.png" : "/providers/oai-cc.png";
     }

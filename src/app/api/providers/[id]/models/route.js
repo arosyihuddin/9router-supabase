@@ -5,6 +5,7 @@ import { GEMINI_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
+import { normalizeCustomHeaders } from "@/shared/utils/customHeaders";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -12,6 +13,19 @@ const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
   return data?.data || data?.models || data?.results || [];
 };
+
+const parseOpenCodeFreeModels = (data) =>
+  parseOpenAIStyleModels(data)
+    .map((model) => {
+      const id = model?.id || model?.name || model?.model;
+      if (!id || !id.endsWith("-free")) return null;
+      return {
+        ...model,
+        id,
+        name: model?.name || model?.displayName || id,
+      };
+    })
+    .filter(Boolean);
 
 const parseGeminiCliModels = (data) => {
   if (Array.isArray(data?.models)) {
@@ -135,6 +149,18 @@ const PROVIDER_MODELS_CONFIG = {
     headers: { "Content-Type": "application/json" },
     authQuery: "key", // Use query param for API key
     parseResponse: (data) => data.models || []
+  },
+  opencode: {
+    url: "https://opencode.ai/zen/v1/models",
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "Authorization": "Bearer public",
+      "x-opencode-client": "desktop"
+    },
+    noAuth: true,
+    parseResponse: parseOpenCodeFreeModels
   },
   qwen: {
     url: "https://portal.qwen.ai/v1/models",
@@ -348,6 +374,7 @@ export async function GET(request, { params }) {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${connection.apiKey}`,
+          ...normalizeCustomHeaders(connection.providerSpecificData?.customHeaders),
         },
       });
 
@@ -435,7 +462,7 @@ export async function GET(request, { params }) {
 
     // Get auth token
     const token = connection.providerSpecificData?.copilotToken || connection.accessToken || connection.apiKey;
-    if (!token) {
+    if (!token && !config.noAuth) {
       return NextResponse.json({ error: "No valid token found" }, { status: 401 });
     }
 
@@ -450,7 +477,7 @@ export async function GET(request, { params }) {
 
     // Build headers
     const headers = { ...config.headers };
-    if (config.authHeader && !config.authQuery) {
+    if (token && config.authHeader && !config.authQuery) {
       headers[config.authHeader] = (config.authPrefix || "") + token;
     }
 

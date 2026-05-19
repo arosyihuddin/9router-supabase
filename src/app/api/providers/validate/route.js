@@ -6,6 +6,7 @@ import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js"
 import { openaiToCommandCode } from "open-sse/translator/request/openai-to-commandcode.js";
 import { PROVIDER_ENDPOINTS } from "@/shared/constants/config";
 import { normalizeProviderId } from "@/lib/providerNormalization";
+import { normalizeCustomHeaders } from "@/shared/utils/customHeaders";
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
 // Returns true if API key is accepted (status !== 401 && !== 403).
@@ -105,7 +106,10 @@ export async function POST(request) {
         }
         const modelsUrl = `${node.baseUrl?.replace(/\/$/, "")}/models`;
         const res = await fetch(modelsUrl, {
-          headers: { "Authorization": `Bearer ${apiKey}` },
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            ...normalizeCustomHeaders(node.customHeaders),
+          },
         });
         isValid = res.ok;
         return NextResponse.json({

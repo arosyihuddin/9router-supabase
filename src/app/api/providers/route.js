@@ -131,6 +131,8 @@ export async function POST(request) {
         prefix: node.prefix,
         apiType: node.apiType,
         baseUrl: node.baseUrl,
+        iconUrl: node.iconUrl || "",
+        customHeaders: node.customHeaders || {},
         nodeName: node.name,
       };
     } else if (isAnthropicCompatibleProvider(provider)) {

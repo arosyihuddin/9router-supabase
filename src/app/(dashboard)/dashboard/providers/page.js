@@ -23,6 +23,9 @@ import {
 } from "@/shared/constants/providers";
 import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
+import { normalizeCustomHeaders } from "@/shared/utils/customHeaders";
+import CustomHeadersModal, { CustomHeadersPreview } from "@/shared/components/CustomHeadersModal";
+import IconUrlPreview from "@/shared/components/IconUrlPreview";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
@@ -260,6 +263,7 @@ export default function ProvidersPage() {
       color: "#10A37F",
       textIcon: "OC",
       apiType: node.apiType,
+      iconUrl: node.iconUrl,
     }))
     .filter((p) => matchSearch(p.name));
 
@@ -729,6 +733,7 @@ function ApiKeyProviderCard({
   };
 
   const getIconPath = () => {
+    if (isCompatible && provider.iconUrl) return provider.iconUrl;
     if (isCompatible)
       return provider.apiType === "responses"
         ? "/providers/oai-r.png"
@@ -847,12 +852,15 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
     prefix: "",
     apiType: "chat",
     baseUrl: "https://api.openai.com/v1",
+    iconUrl: "",
+    customHeaders: {},
   });
   const [submitting, setSubmitting] = useState(false);
   const [checkKey, setCheckKey] = useState("");
   const [checkModelId, setCheckModelId] = useState("");
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
+  const [showHeadersModal, setShowHeadersModal] = useState(false);
 
   const apiTypeOptions = [
     { value: "chat", label: "Chat Completions" },
@@ -871,6 +879,7 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
       !formData.baseUrl.trim()
     )
       return;
+    const customHeaders = normalizeCustomHeaders(formData.customHeaders);
     setSubmitting(true);
     try {
       const res = await fetch("/api/provider-nodes", {
@@ -881,6 +890,8 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
           prefix: formData.prefix,
           apiType: formData.apiType,
           baseUrl: formData.baseUrl,
+          iconUrl: formData.iconUrl,
+          customHeaders,
           type: "openai-compatible",
         }),
       });
@@ -892,6 +903,8 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
           prefix: "",
           apiType: "chat",
           baseUrl: "https://api.openai.com/v1",
+          iconUrl: "",
+          customHeaders: {},
         });
         setCheckKey("");
         setValidationResult(null);
@@ -904,6 +917,7 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
   };
 
   const handleValidate = async () => {
+    const customHeaders = normalizeCustomHeaders(formData.customHeaders);
     setValidating(true);
     try {
       const res = await fetch("/api/provider-nodes/validate", {
@@ -914,6 +928,7 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
           apiKey: checkKey,
           type: "openai-compatible",
           modelId: checkModelId.trim() || undefined,
+          customHeaders,
         }),
       });
       const data = await res.json();
@@ -949,10 +964,25 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
       </div>
     );
   };
+  const defaultIconPath = formData.apiType === "responses" ? "/providers/oai-r.png" : "/providers/oai-cc.png";
 
   return (
     <Modal isOpen={isOpen} title="Add OpenAI Compatible" onClose={onClose}>
       <div className="flex flex-col gap-4">
+        <IconUrlPreview
+          src={formData.iconUrl}
+          fallbackSrc={defaultIconPath}
+          alt={formData.name || "OpenAI Compatible"}
+        />
+        <Input
+          label="Icon URL"
+          value={formData.iconUrl}
+          onChange={(e) =>
+            setFormData({ ...formData, iconUrl: e.target.value })
+          }
+          placeholder="https://example.com/icon.png"
+          hint="Optional. Used on the provider card and detail header."
+        />
         <Input
           label="Name"
           value={formData.name}
@@ -984,6 +1014,21 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
           placeholder="https://api.openai.com/v1"
           hint="Use the base URL (ending in /v1) for your OpenAI-compatible API."
         />
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-sm font-medium text-text-main">Custom Headers</label>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              icon={Object.keys(normalizeCustomHeaders(formData.customHeaders)).length ? "edit" : "add"}
+              onClick={() => setShowHeadersModal(true)}
+            >
+              {Object.keys(normalizeCustomHeaders(formData.customHeaders)).length ? "Edit Headers" : "Add Header"}
+            </Button>
+          </div>
+          <CustomHeadersPreview headers={formData.customHeaders} />
+        </div>
         <Input
           label="API Key (for Check)"
           type="password"
@@ -1025,6 +1070,12 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
             Cancel
           </Button>
         </div>
+        <CustomHeadersModal
+          isOpen={showHeadersModal}
+          headers={formData.customHeaders}
+          onSave={(customHeaders) => setFormData({ ...formData, customHeaders })}
+          onClose={() => setShowHeadersModal(false)}
+        />
       </div>
     </Modal>
   );

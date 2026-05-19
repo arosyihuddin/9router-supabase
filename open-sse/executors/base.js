@@ -1,5 +1,6 @@
 import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { normalizeCustomHeaders } from "../../src/shared/utils/customHeaders.js";
 
 /**
  * BaseExecutor - Base class for provider executors
@@ -66,6 +67,10 @@ export class BaseExecutor {
 
     if (stream) {
       headers["Accept"] = "text/event-stream";
+    }
+
+    if (this.provider?.startsWith?.("openai-compatible-")) {
+      Object.assign(headers, normalizeCustomHeaders(credentials?.providerSpecificData?.customHeaders));
     }
 
     return headers;

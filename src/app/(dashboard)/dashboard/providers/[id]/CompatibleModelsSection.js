@@ -73,7 +73,9 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
 export default function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, copied, onCopy, onSetAlias, onDeleteAlias, connections, isAnthropic }) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [fetchError, setFetchError] = useState("");
   const [testingModelId, setTestingModelId] = useState(null);
   const [modelTestResults, setModelTestResults] = useState({});
 
@@ -141,49 +143,59 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
     }
   };
 
-  const handleImport = async () => {
-    if (importing) return;
+  const handleFetchModels = async () => {
+    if (fetchingModels) return;
     const activeConnection = connections.find((conn) => conn.isActive !== false);
     if (!activeConnection) return;
 
-    setImporting(true);
+    setFetchingModels(true);
+    setFetchError("");
     try {
       const res = await fetch(`/api/providers/${activeConnection.id}/models`);
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || "Failed to import models");
+        setFetchError(data.error || "Failed to fetch models");
         return;
       }
       const models = data.models || [];
       if (models.length === 0) {
-        alert("No models returned from /models.");
+        setAvailableModels([]);
+        setFetchError("No models returned from /models.");
         return;
       }
-      let importedCount = 0;
-      for (const model of models) {
-        const modelId = model.id || model.name || model.model;
-        if (!modelId) continue;
-        const resolvedAlias = resolveAlias(modelId);
-        if (!resolvedAlias) continue;
-        await onSetAlias(modelId, resolvedAlias, providerStorageAlias);
-        importedCount += 1;
-      }
-      if (importedCount === 0) {
-        alert("No new models were added.");
-      }
+
+      const normalizedModels = models
+        .map((model) => {
+          const id = model.id || model.name || model.model;
+          if (!id) return null;
+          return {
+            id,
+            name: model.name || model.displayName || model.display_name || id,
+          };
+        })
+        .filter(Boolean);
+
+      setAvailableModels(normalizedModels);
     } catch (error) {
-      console.log("Error importing models:", error);
+      console.log("Error fetching models:", error);
+      setFetchError("Failed to fetch models");
     } finally {
-      setImporting(false);
+      setFetchingModels(false);
     }
   };
 
   const canImport = connections.some((conn) => conn.isActive !== false);
+  const existingModelIds = new Set(allModels.map((model) => model.modelId));
+  const addAvailableModel = async (modelId) => {
+    const resolvedAlias = resolveAlias(modelId);
+    if (!resolvedAlias) return;
+    await onSetAlias(modelId, resolvedAlias, providerStorageAlias);
+  };
 
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-muted">
-        Add {isAnthropic ? "Anthropic" : "OpenAI"}-compatible models manually or import them from the /models endpoint.
+        Add {isAnthropic ? "Anthropic" : "OpenAI"}-compatible models manually or fetch available models from the /models endpoint.
       </p>
 
       <div className="flex items-end gap-2 flex-wrap">
@@ -202,15 +214,50 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         <Button size="sm" icon="add" onClick={handleAdd} disabled={!newModel.trim() || adding}>
           {adding ? "Adding..." : "Add"}
         </Button>
-        <Button size="sm" variant="secondary" icon="download" onClick={handleImport} disabled={!canImport || importing}>
-          {importing ? "Importing..." : "Import from /models"}
+        <Button size="sm" variant="secondary" icon="sync" onClick={handleFetchModels} disabled={!canImport || fetchingModels}>
+          {fetchingModels ? "Importing..." : "Import from /models"}
         </Button>
       </div>
 
       {!canImport && (
         <p className="text-xs text-text-muted">
-          Add a connection to enable importing models.
+          Add a connection to enable fetching models.
         </p>
+      )}
+
+      {fetchError && (
+        <p className="text-xs text-red-500">{fetchError}</p>
+      )}
+
+      {availableModels.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium">Available Models</p>
+            <span className="text-xs text-text-muted">{availableModels.length} fetched</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {availableModels.map((model) => {
+              const isAdded = existingModelIds.has(model.id);
+              return (
+                <button
+                  key={model.id}
+                  type="button"
+                  onClick={() => !isAdded && addAvailableModel(model.id)}
+                  disabled={isAdded}
+                  className={`inline-flex max-w-full items-center gap-1 rounded border px-2.5 py-1.5 text-xs transition-colors ${
+                    isAdded
+                      ? "cursor-default border-border bg-surface-2 text-text-muted"
+                      : "border-border text-text-main hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+                  }`}
+                  title={model.name}
+                >
+                  <span className="material-symbols-outlined text-[13px]">{isAdded ? "check" : "add"}</span>
+                  <span className="truncate">{model.id}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {allModels.length > 0 && (

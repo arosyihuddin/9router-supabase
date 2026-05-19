@@ -5,6 +5,7 @@ import { buildClineHeaders } from "../../src/shared/utils/clineAuth.js";
 import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
+import { normalizeCustomHeaders } from "../../src/shared/utils/customHeaders.js";
 
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
@@ -159,6 +160,9 @@ export class DefaultExecutor extends BaseExecutor {
     }
 
     if (stream) headers["Accept"] = "text/event-stream";
+    if (this.provider?.startsWith?.("openai-compatible-")) {
+      Object.assign(headers, normalizeCustomHeaders(credentials?.providerSpecificData?.customHeaders));
+    }
     return headers;
   }
 

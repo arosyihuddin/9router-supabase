@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 
 export default function ProviderIcon({
@@ -12,6 +12,10 @@ export default function ProviderIcon({
   fallbackColor,
 }) {
   const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    setErrored(false);
+  }, [src]);
 
   if (!src || errored) {
     return (

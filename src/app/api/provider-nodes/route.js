@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createProviderNode, getProviderNodes } from "@/models";
 import { OPENAI_COMPATIBLE_PREFIX, ANTHROPIC_COMPATIBLE_PREFIX, CUSTOM_EMBEDDING_PREFIX } from "@/shared/constants/providers";
 import { generateId } from "@/shared/utils";
+import { normalizeCustomHeaders } from "@/shared/utils/customHeaders";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,8 @@ export async function POST(request) {
         prefix: prefix.trim(),
         apiType,
         baseUrl: (baseUrl || OPENAI_COMPATIBLE_DEFAULTS.baseUrl).trim(),
+        iconUrl: typeof body.iconUrl === "string" ? body.iconUrl.trim() : "",
+        customHeaders: normalizeCustomHeaders(body.customHeaders),
         name: name.trim(),
       });
       return NextResponse.json({ node }, { status: 201 });

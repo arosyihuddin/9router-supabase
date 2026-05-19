@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeCustomHeaders } from "@/shared/utils/customHeaders";
 
 // Fetch with timeout wrapper
 const fetchWithTimeout = (url, options, timeout = 10000) => {
@@ -54,6 +55,7 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const { baseUrl, apiKey, type, modelId } = body;
+    const customHeaders = normalizeCustomHeaders(body.customHeaders);
 
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: "Base URL and API key required" }, { status: 400 });
@@ -150,7 +152,7 @@ export async function POST(request) {
     // OpenAI Compatible Validation (Default)
     const modelsUrl = `${baseUrl.replace(/\/$/, "")}/models`;
     const res = await fetchWithTimeout(modelsUrl, {
-      headers: { "Authorization": `Bearer ${apiKey}` },
+      headers: { "Authorization": `Bearer ${apiKey}`, ...customHeaders },
     });
 
     if (res.ok) return NextResponse.json({ valid: true });
@@ -166,7 +168,8 @@ export async function POST(request) {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          ...customHeaders
         },
         body: JSON.stringify({
           model: modelId,
